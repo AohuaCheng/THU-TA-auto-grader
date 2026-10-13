@@ -496,7 +496,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_format = sub.add_parser(
         "format-feedback",
-        help="从 feedback 提取 Review Comments，生成 Firstround_feedback_学号.docx",
+        help="从 feedback 提取 Review Comments，生成可上传网络学堂的 Firstround_feedback_学号.docx",
     )
     p_format.add_argument("--dir", help="作业目录")
     p_format.add_argument("--url", help="网络学堂作业 URL，用于定位下载目录")

@@ -354,7 +354,7 @@ def run_format_feedback(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="从 feedback 提取 Review Comments，生成 Firstround_feedback_学号.docx"
+        description="从 feedback 提取 Review Comments，生成符合网络学堂上传格式的反馈 docx"
     )
     parser.add_argument("--dir", help="作业目录（默认 downloads 下唯一子目录）")
     parser.add_argument(

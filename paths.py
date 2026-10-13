@@ -1,4 +1,4 @@
-"""Workspace paths: repo code in TA-auto-grader/, data dirs in parent Essays/."""
+"""Workspace paths: repo code in THU-TA-auto-grader/, data dirs in parent Essays/."""
 
 from __future__ import annotations
 
