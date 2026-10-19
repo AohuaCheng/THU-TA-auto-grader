@@ -170,13 +170,15 @@ class YuketangBrowser:
         url = (driver.current_url or "").lower()
         if "correcting-assistant-evaluate" in url:
             return False
+        self._sync_cookies()
+        if self._has_auth_cookies():
+            # 微信扫码成功后常短暂停在 /web/?next=…，已有 session 则不算登录页
+            return False
         body = driver.execute_script("return document.body?.innerText || '';") or ""
-        return (
-            "/web" in url
-            or "扫码登录" in body
-            or "账号登录" in body
-            or "微信快捷登录" in body
-        )
+        login_markers = ("扫码登录", "账号登录", "微信快捷登录")
+        if any(k in body for k in login_markers):
+            return True
+        return "login" in url and "yuketang.cn" in url
 
     def _is_on_agreement_page(self) -> bool:
         driver = self._ensure_driver()
@@ -306,7 +308,11 @@ class YuketangBrowser:
         if self._try_finish_login_from_evaluate_page():
             return True
 
-        self._log("正在打开雨课堂登录页，请微信扫码…")
+        self._log(
+            "正在打开雨课堂登录页。"
+            "请在标题栏含「正受到自动测试软件控制」的 Chrome 窗口内微信扫码，"
+            "不要用日常 Chrome/Safari 另开登录。"
+        )
         driver.get(yuketang_login_url())
         time.sleep(2)
 
@@ -327,8 +333,17 @@ class YuketangBrowser:
             self._sync_cookies()
             url = driver.current_url or ""
 
+            if self._has_auth_cookies() and "correcting-assistant-evaluate" not in url:
+                self._log("已检测到登录 cookie，正在进入批改页…")
+                driver.get(yuketang_evaluate_url())
+                time.sleep(3)
+                if self._try_finish_login_from_evaluate_page():
+                    return True
+                continue
+
             if self._is_on_login_page():
                 if time.time() - qr_hint_at > 15:
+                    self._log("仍在登录页：请在该 Chrome 窗口完成微信扫码并确认登录…")
                     self._ensure_wechat_qrcode_login()
                     qr_hint_at = time.time()
                 time.sleep(2)
@@ -346,10 +361,10 @@ class YuketangBrowser:
                 if self._try_finish_login_from_evaluate_page():
                     return True
                 csrf_refresh_count += 1
-                if csrf_refresh_count <= 5:
+                if csrf_refresh_count <= 10:
                     self._log(
                         f"已进入批改页，等待 CSRF 同步…"
-                        f"（{csrf_refresh_count}/5，刷新页面）"
+                        f"（{csrf_refresh_count}/10，刷新页面；无需再次扫码）"
                     )
                     driver.refresh()
                     time.sleep(3)

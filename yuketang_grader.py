@@ -307,13 +307,24 @@ def run_grading(
 
     try:
         logged_in = False
-        if not relogin and browser.verify_session(inject_cookies=False):
+        if not relogin and session_path.exists() and browser.load_session(session_path):
+            if browser.verify_session(inject_cookies=True):
+                print("雨课堂已登录（yuketang_session.json + Chrome）。")
+                logged_in = True
+        if not relogin and not logged_in and browser.verify_session(inject_cookies=False):
             print("雨课堂已登录（Chrome profile 有效）。")
             logged_in = True
         if not logged_in:
+            print(
+                "\n雨课堂会话已过期。建议先单独登录再批改：\n"
+                "  ./scripts/run.sh yuketang-login\n"
+                "若继续在此窗口登录：请在**自动弹出的 Chrome**（非日常浏览器）里微信扫码，"
+                "扫码后勿关窗口，等待终端出现「雨课堂登录成功」或开始批改。\n"
+            )
             if not browser.interactive_login(login_mode="wechat"):
                 raise SystemExit(
-                    "雨课堂登录失败。请保持 Chrome 窗口打开，完成微信扫码后再试。"
+                    "雨课堂登录失败。请先运行: ./scripts/run.sh yuketang-login "
+                    "（保持 Chrome 打开直到「登录完成」），再重新 grade。"
                 )
             browser.save_session(session_path)
             if not browser.verify_session(inject_cookies=False):

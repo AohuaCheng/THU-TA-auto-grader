@@ -50,7 +50,15 @@ def translate_remark(remark: str) -> str:
 
 def build_comment(remark: str | None, *, score: float | int | None = None) -> str:
     remark_text = str(remark).strip() if remark else ""
-    if "题目无关" in remark_text or score == 0:
+    numeric_score: float | None = None
+    if isinstance(score, (int, float)):
+        numeric_score = float(score)
+    elif score is not None and str(score).strip().isdigit():
+        numeric_score = float(str(score).strip())
+    if numeric_score is not None and numeric_score > 0:
+        remark_text = remark_text.replace("作业内容与所选题目无关，请下次根据题目要求作答", "")
+        remark_text = remark_text.replace("；；", "；").strip("； ")
+    if "题目无关" in remark_text or numeric_score == 0:
         return OFF_TOPIC_COMMENT
     if remark_text:
         return f"{DEFAULT_COMMENT}\n\n{translate_remark(remark_text)}"
