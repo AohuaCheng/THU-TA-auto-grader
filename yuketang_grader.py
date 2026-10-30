@@ -9,14 +9,19 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from topic_detector import REQUIREMENT_TEXT, build_topic_field_from_docx
+from topic_detector import (
+    REQUIREMENT_TEXT,
+    build_topic_field_from_docx,
+    describe_topic,
+    essay_number_from_dir,
+    grading_rule_for,
+)
 from yuketang_client import (
     DEFAULT_SESSION_FILE,
     YuketangBrowser,
     yuketang_evaluate_url,
 )
 
-GRADING_RULE = "Reflective"
 PROGRESS_FILE = "grading_progress.json"
 GRADING_TIMEOUT = 600
 SUBMIT_TIMEOUT = 90
@@ -156,12 +161,18 @@ def submit_one(
     browser: YuketangBrowser,
     job: GradeJob,
     *,
+    download_dir: Path,
     sanitize_hash: bool = False,
 ) -> tuple[bool, str]:
-    topic_id, topic_text = build_topic_field_from_docx(job.docx_path)
+    topic_id, topic_text = build_topic_field_from_docx(
+        job.docx_path, download_dir=download_dir
+    )
+    rule = grading_rule_for(
+        topic_id, essay_number=essay_number_from_dir(download_dir)
+    )
     upload_path = prepare_upload_docx(job.docx_path, sanitize_hash=sanitize_hash)
 
-    browser.prepare_reflective_edit_form(GRADING_RULE)
+    browser.prepare_reflective_edit_form(rule)
 
     if REQUIREMENT_TEXT not in topic_text:
         return False, "题目文本缺少 requirement 段落"
@@ -178,19 +189,22 @@ def submit_one(
     uploaded = upload_path.name
     if sanitize_hash and uploaded != job.docx_path.name:
         uploaded = f"{uploaded} (原文件: {job.docx_path.name})"
-    return True, f"topic_{topic_id}, submitted {uploaded}"
+    return True, f"topic_{topic_id}, rule={rule}, submitted {uploaded}"
 
 
 def regrade_job(
     browser: YuketangBrowser,
     job: GradeJob,
     *,
+    download_dir: Path,
     sanitize_hash: bool = False,
 ) -> PendingSubmission | None:
     """重新提交评分（用于 OSS NoSuchKey / 下载链接失效）。"""
     label = "去掉文件名中的 #" if sanitize_hash else "保持原文件名"
     print(f"  重新评分 {job.student_id}_{job.name}（{label}）…")
-    ok, note = submit_one(browser, job, sanitize_hash=sanitize_hash)
+    ok, note = submit_one(
+        browser, job, download_dir=download_dir, sanitize_hash=sanitize_hash
+    )
     if not ok:
         print(f"  重新评分失败: {note}")
         return None
@@ -253,7 +267,9 @@ def drain_pending_downloads(
             )
             if should_regrade:
                 use_sanitize = filename_has_hash(job.docx_path)
-                retried = regrade_job(browser, job, sanitize_hash=use_sanitize)
+                retried = regrade_job(
+                    browser, job, download_dir=download_dir, sanitize_hash=use_sanitize
+                )
                 if retried:
                     retried.regrade_count = item.regrade_count + 1
                     retried.sanitize_hash = use_sanitize
@@ -333,7 +349,15 @@ def run_grading(
         progress = load_progress(download_dir)
         history: list[str] = []
 
-        print(f"待处理 {len(jobs)} 份 docx，批改规则: {GRADING_RULE}")
+        essay_n = essay_number_from_dir(download_dir)
+        if essay_n >= 2:
+            print(
+                "待处理 {} 份 docx；Essay {} 规则: 题目1→Scientific, 题目2→Reflective".format(
+                    len(jobs), essay_n
+                )
+            )
+        else:
+            print(f"待处理 {len(jobs)} 份 docx，批改规则: Reflective")
         print(f"页面: {yuketang_evaluate_url()}")
         print("模式: 流水线（清空表单→提交→按时间下载 feedback）")
         failed: list[tuple[GradeJob, str]] = []
@@ -348,14 +372,17 @@ def run_grading(
 
             drain_pending_downloads(browser, pending, progress, download_dir)
 
-            topic_id, topic_text = build_topic_field_from_docx(job.docx_path)
+            topic_id, label, rule = describe_topic(job.docx_path, download_dir)
             print(
                 f"[{idx}/{len(jobs)}] {job.student_id}_{job.name}"
-                f" | 题目{topic_id} | 上传: {job.docx_path.name}"
-                f" | 路径: {job.docx_path}"
+                f" | 题目{topic_id} ({label}) | 规则 {rule}"
+                f" | 上传: {job.docx_path.name}"
             )
 
             if dry_run:
+                _, topic_text = build_topic_field_from_docx(
+                    job.docx_path, download_dir=download_dir
+                )
                 print(f"  题目栏完整内容:\n  {topic_text}")
                 print(f"  feedback 将保存为: {feedback_path_for(job).name}")
                 continue
@@ -364,7 +391,7 @@ def run_grading(
                 job.docx_path, sanitize_hash=sanitize_hash
             )
             ok, note = submit_one(
-                browser, job, sanitize_hash=sanitize_hash
+                browser, job, download_dir=download_dir, sanitize_hash=sanitize_hash
             )
             if not ok:
                 print(f"  失败: {note}")

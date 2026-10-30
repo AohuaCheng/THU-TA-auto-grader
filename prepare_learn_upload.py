@@ -15,6 +15,15 @@ from paths import download_root
 DEFAULT_SCORE_XLSX = "Minc2026Essays分数汇总.xlsx"
 DEFAULT_ASSIGNMENT_DIR = "Essay1"
 FIRST_ROUND_TEMPLATE = "Firstround_feedback_{student_id}.docx"
+COL_OVERALL = 16
+COL_EXCELLENT = 17
+COL_REMARK = 19
+
+from topic_detector import essay_number_from_dir
+
+
+def sheet_name_for_assignment(assignment_dir: Path) -> str:
+    return f"Essay {essay_number_from_dir(assignment_dir)}"
 
 DEFAULT_COMMENT = (
     "Excellent work! Your essay demonstrates strong critical and creative thinking. "
@@ -48,8 +57,19 @@ def translate_remark(remark: str) -> str:
     return text
 
 
+def _strip_word_count_remarks(remark_text: str) -> str:
+    parts = [p.strip() for p in re.split(r"[；;\n]", remark_text) if p.strip()]
+    kept = [
+        p
+        for p in parts
+        if "字数超出" not in p and "字数不足" not in p and not re.match(r"^字数[：:]", p)
+    ]
+    return "；".join(kept).strip("； ")
+
+
 def build_comment(remark: str | None, *, score: float | int | None = None) -> str:
     remark_text = str(remark).strip() if remark else ""
+    remark_text = _strip_word_count_remarks(remark_text)
     numeric_score: float | None = None
     if isinstance(score, (int, float)):
         numeric_score = float(score)
@@ -89,6 +109,7 @@ def prepare_upload_csv(
     assignment_dir: Path,
     output_csv: Path,
     default_wlkcid: str | None = None,
+    sheet_name: str | None = None,
 ) -> Path:
     submissions_csv = assignment_dir / "submissions.csv"
     if not submissions_csv.exists():
@@ -96,7 +117,10 @@ def prepare_upload_csv(
 
     submissions = load_submissions(submissions_csv)
     wb = openpyxl.load_workbook(score_xlsx, data_only=True)
-    ws = wb["Essay 1"]
+    sheet = sheet_name or sheet_name_for_assignment(assignment_dir)
+    if sheet not in wb.sheetnames:
+        raise ValueError(f"汇总表无 sheet「{sheet}」，现有: {wb.sheetnames}")
+    ws = wb[sheet]
 
     rows: list[dict[str, str]] = []
     missing_attachment: list[str] = []
@@ -108,9 +132,9 @@ def prepare_upload_csv(
             continue
         student_id = str(student_id).strip()
         name = str(ws.cell(r, 2).value or "").strip()
-        overall = ws.cell(r, 16).value
-        excellent = ws.cell(r, 17).value
-        remark = ws.cell(r, 18).value
+        overall = ws.cell(r, COL_OVERALL).value
+        excellent = ws.cell(r, COL_EXCELLENT).value
+        remark = ws.cell(r, COL_REMARK).value
 
         student_dir = assignment_dir / f"{student_id}_{name}"
         attachment = find_firstround_attachment(student_dir, student_id)
@@ -187,6 +211,10 @@ def main(argv: list[str] | None = None) -> int:
         help="输出 CSV 路径（默认作业目录/learn_upload.csv）",
     )
     parser.add_argument("--wlkcid", help="默认 wlkcid")
+    parser.add_argument(
+        "--sheet",
+        help="分数汇总 sheet（默认按 --dir 推断 Essay 1 / Essay 2）",
+    )
     args = parser.parse_args(argv)
 
     root = download_root()
@@ -199,6 +227,7 @@ def main(argv: list[str] | None = None) -> int:
         assignment_dir=assignment_dir,
         output_csv=output_csv,
         default_wlkcid=args.wlkcid,
+        sheet_name=args.sheet,
     )
     return 0
 

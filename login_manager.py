@@ -176,6 +176,15 @@ class BrowserLoginManager:
             self.driver.get(f"{LEARN_BASE_URL}/f/wlxt/index/course/student/")
             time.sleep(2)
 
+        # SSO 刚跳转到 learn 时 cookie 可能尚未写全，稍等并刷新主页再取。
+        deadline = time.time() + 45
+        while time.time() < deadline:
+            self.driver.get(f"{LEARN_BASE_URL}/f/wlxt/index/course/student/")
+            time.sleep(2)
+            if len(self.driver.get_cookies()) >= 3:
+                break
+            time.sleep(2)
+
         if not self._build_session_from_browser():
             return False
 

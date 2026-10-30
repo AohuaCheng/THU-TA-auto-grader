@@ -15,7 +15,7 @@ from file_utils import postprocess_download_dir
 from learn_client import LearnTAClient, parse_assignment_url
 from export_score_summary import export_score_summary
 from format_feedback import run_format_feedback
-from annotate_word_count import annotate_word_count
+from annotate_word_count import annotate_combined_workbook, annotate_word_count
 from prepare_learn_upload import prepare_upload_csv
 from paths import download_root
 from login_manager import BrowserLoginManager
@@ -99,15 +99,25 @@ def cmd_download(args: argparse.Namespace) -> None:
 
 
 def cmd_annotate_word_count(args: argparse.Namespace) -> None:
+    scores = Path(args.scores) if args.scores else download_root() / "Minc2026Essays分数汇总.xlsx"
+    if getattr(args, "combined", False):
+        annotate_combined_workbook(
+            scores,
+            download_root(),
+            min_words=args.min_words,
+            max_words=args.max_words,
+        )
+        return
+
     if args.dir:
         assignment_dir = Path(args.dir)
     else:
         assignment_dir = download_root() / "Essay1"
 
-    scores = Path(args.scores) if args.scores else download_root() / "Minc2026Essays分数汇总.xlsx"
     annotate_word_count(
         score_xlsx=scores,
         assignment_dir=assignment_dir,
+        sheet_name=getattr(args, "sheet", None) or "Essay 1",
         min_words=args.min_words,
         max_words=args.max_words,
     )
@@ -127,6 +137,7 @@ def cmd_prepare_upload(args: argparse.Namespace) -> None:
         assignment_dir=assignment_dir,
         output_csv=output,
         default_wlkcid=args.wlkcid,
+        sheet_name=getattr(args, "sheet", None),
     )
 
 
@@ -249,7 +260,67 @@ def cmd_grade(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_export_total_grades(args: argparse.Namespace) -> None:
+    from export_total_grades import DEFAULT_ROSTER, export_total_grades
+
+    roster = Path(args.roster) if args.roster else DEFAULT_ROSTER
+    if not roster.exists():
+        print(f"找不到名单: {roster}")
+        sys.exit(1)
+    scores = Path(args.scores) if args.scores else download_root() / "Minc2026Essays分数汇总.xlsx"
+    output = Path(args.output) if args.output else download_root() / "Minc2026总成绩.xlsx"
+    template = Path(args.template) if args.template else None
+    path = export_total_grades(
+        roster_path=roster,
+        scores_xlsx=scores,
+        output_path=output,
+        template_path=template,
+    )
+    print(f"已生成: {path}")
+
+
+def cmd_filter_roster(args: argparse.Namespace) -> None:
+    from roster_filter import filter_combined_and_essay2_copy, load_roster_ids
+
+    roster = Path(args.roster)
+    if not roster.exists():
+        print(f"找不到名单: {roster}")
+        sys.exit(1)
+    combined, report = filter_combined_and_essay2_copy(
+        download_root_path=download_root(),
+        roster_path=roster,
+    )
+    print(f"名单学号: {len(load_roster_ids(roster))} 人")
+    print(f"已更新: {combined}")
+    for sheet, removed in report.items():
+        if removed:
+            print(f"  {sheet} 删除: {', '.join(sorted(removed))}")
+        else:
+            print(f"  {sheet} 无多余行")
+
+
+def cmd_analyze_scores(args: argparse.Namespace) -> None:
+    from analyze_essay_scores import COMBINED_NAME, REPORT_NAME, run_analysis
+
+    combined = Path(args.scores) if args.scores else download_root() / COMBINED_NAME
+    report = Path(args.output) if args.output else download_root() / REPORT_NAME
+    if not combined.exists():
+        print(f"找不到: {combined}")
+        sys.exit(1)
+    text = run_analysis(combined, report)
+    print(text)
+    print(f"\n已写入: {report}")
+
+
 def cmd_export_scores(args: argparse.Namespace) -> None:
+    if getattr(args, "combined", False):
+        from export_score_summary import sync_combined_summary
+
+        combined, essay2_only = sync_combined_summary(download_root_path=download_root())
+        print(f"已更新汇总: {combined}")
+        print(f"已保留 Essay2 独立文件: {essay2_only}")
+        return
+
     if args.dir:
         download_dir = Path(args.dir)
     else:
@@ -492,7 +563,44 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_scores.add_argument("--template", help="分数汇总模板 xlsx")
     p_scores.add_argument("--output", help="输出文件路径")
+    p_scores.add_argument(
+        "--combined",
+        action="store_true",
+        help="更新 downloads/Minc2026Essays分数汇总.xlsx（Essay1+Essay2 分 sheet）并生成 Essay2 独立副本",
+    )
     p_scores.set_defaults(func=cmd_export_scores)
+
+    p_total = sub.add_parser(
+        "export-total-grades",
+        help="生成 MINC 总成绩 xlsx（Essay scores + 总成绩模板）",
+    )
+    p_total.add_argument(
+        "--roster",
+        help="学生信息.xls 路径（默认 ../学生信息.xls）",
+    )
+    p_total.add_argument("--scores", help="Minc2026Essays分数汇总.xlsx 路径")
+    p_total.add_argument("--output", help="输出 xlsx 路径")
+    p_total.add_argument("--template", help="总成绩模板（默认 templates/MINC 2025 总成绩 样例.xlsx）")
+    p_total.set_defaults(func=cmd_export_total_grades)
+
+    p_roster = sub.add_parser(
+        "filter-roster",
+        help="按学生信息.xls 删除汇总表中不在名单内的学号",
+    )
+    p_roster.add_argument(
+        "--roster",
+        default=str(Path(__file__).resolve().parent.parent.parent / "学生信息.xls"),
+        help="最终学生名单 xls（默认 ../学生信息.xls）",
+    )
+    p_roster.set_defaults(func=cmd_filter_roster)
+
+    p_analyze = sub.add_parser(
+        "analyze-scores",
+        help="分析题目间均分差异与 Essay1→Essay2 纵向变化",
+    )
+    p_analyze.add_argument("--scores", help="汇总 xlsx 路径")
+    p_analyze.add_argument("--output", help="分析报告 markdown 路径")
+    p_analyze.set_defaults(func=cmd_analyze_scores)
 
     p_format = sub.add_parser(
         "format-feedback",
@@ -522,6 +630,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="分数汇总 xlsx（默认 downloads/Minc2026Essays分数汇总.xlsx）",
     )
     p_wordcount.add_argument("--dir", help="作业目录（默认 downloads/Essay1）")
+    p_wordcount.add_argument("--sheet", help="工作表名（Essay 1 / Essay 2）")
+    p_wordcount.add_argument(
+        "--combined",
+        action="store_true",
+        help="为汇总表 Essay 1 与 Essay 2 两个 sheet 分别标注字数",
+    )
     p_wordcount.add_argument("--min-words", type=int, default=800)
     p_wordcount.add_argument("--max-words", type=int, default=1000)
     p_wordcount.set_defaults(func=cmd_annotate_word_count)
@@ -535,6 +649,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="分数汇总 xlsx（默认 downloads/Minc2026Essays分数汇总.xlsx）",
     )
     p_prep.add_argument("--dir", help="作业目录（默认 downloads/Essay1）")
+    p_prep.add_argument(
+        "--sheet",
+        help="分数汇总 sheet（默认按 --dir 推断 Essay 1 / Essay 2）",
+    )
     p_prep.add_argument("--output", help="输出 CSV（默认 作业目录/learn_upload.csv）")
     p_prep.add_argument("--wlkcid", help="默认 wlkcid")
     p_prep.set_defaults(func=cmd_prepare_upload)

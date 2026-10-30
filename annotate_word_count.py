@@ -21,20 +21,25 @@ from word_count import (
 
 DEFAULT_SCORE_XLSX = "Minc2026Essays分数汇总.xlsx"
 DEFAULT_ASSIGNMENT_DIR = "Essay1"
-SHEET_NAME = "Essay 1"
 COL_WORD_COUNT = 18
 COL_REMARK = 19
+
+SHEET_ASSIGNMENT = {
+    "Essay 1": "Essay1",
+    "Essay 2": "Essay2",
+}
 
 
 def annotate_word_count(
     *,
     score_xlsx: Path,
     assignment_dir: Path,
+    sheet_name: str = "Essay 1",
     min_words: int = MIN_WORDS,
     max_words: int = MAX_WORDS,
 ) -> Path:
     wb = openpyxl.load_workbook(score_xlsx)
-    ws = wb[SHEET_NAME]
+    ws = wb[sheet_name]
 
     if ws.cell(row=1, column=COL_WORD_COUNT).value == "备注":
         ws.insert_cols(COL_WORD_COUNT)
@@ -90,21 +95,56 @@ def annotate_word_count(
     return score_xlsx
 
 
+def annotate_combined_workbook(
+    score_xlsx: Path,
+    download_root_path: Path,
+    *,
+    min_words: int = MIN_WORDS,
+    max_words: int = MAX_WORDS,
+) -> Path:
+    for sheet, subdir in SHEET_ASSIGNMENT.items():
+        assignment_dir = download_root_path / subdir
+        if not assignment_dir.is_dir():
+            continue
+        annotate_word_count(
+            score_xlsx=score_xlsx,
+            assignment_dir=assignment_dir,
+            sheet_name=sheet,
+            min_words=min_words,
+            max_words=max_words,
+        )
+    return score_xlsx
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="在分数汇总 xlsx 中标注论文字数")
     parser.add_argument("--scores", type=Path, help=f"分数汇总 xlsx（默认 downloads/{DEFAULT_SCORE_XLSX}）")
     parser.add_argument("--dir", type=Path, help=f"作业目录（默认 downloads/{DEFAULT_ASSIGNMENT_DIR}）")
+    parser.add_argument("--sheet", help="工作表名（Essay 1 / Essay 2）；与 --combined 互斥")
+    parser.add_argument(
+        "--combined",
+        action="store_true",
+        help="为汇总表中 Essay 1 与 Essay 2 两个 sheet 分别标注字数",
+    )
     parser.add_argument("--min-words", type=int, default=MIN_WORDS)
     parser.add_argument("--max-words", type=int, default=MAX_WORDS)
     args = parser.parse_args(argv)
 
     root = download_root()
     score_xlsx = args.scores or (root / DEFAULT_SCORE_XLSX)
-    assignment_dir = args.dir or (root / DEFAULT_ASSIGNMENT_DIR)
 
+    if args.combined:
+        annotate_combined_workbook(
+            score_xlsx, root, min_words=args.min_words, max_words=args.max_words
+        )
+        return 0
+
+    assignment_dir = args.dir or (root / DEFAULT_ASSIGNMENT_DIR)
+    sheet = args.sheet or "Essay 1"
     annotate_word_count(
         score_xlsx=score_xlsx,
         assignment_dir=assignment_dir,
+        sheet_name=sheet,
         min_words=args.min_words,
         max_words=args.max_words,
     )

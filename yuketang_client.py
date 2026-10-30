@@ -1059,8 +1059,7 @@ class YuketangBrowser:
 
         time.sleep(2)
         self._log(
-            "  [2/4] Reflective 会载入上次 case，"
-            "接下来先「编辑」并删除旧附件/题目…"
+            f"  [2/4] {rule_name} 表单：先「编辑」并删除旧附件/题目（如有）…"
         )
 
         self._form_ready = True
